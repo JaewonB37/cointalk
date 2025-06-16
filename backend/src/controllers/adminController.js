@@ -146,9 +146,17 @@ const adminController = {
     // 모든 게시물 조회 (관리자용)
     getPosts: async (req, res) => {
         try {
-            const page = parseInt(req.query.page) || 1;
-            const limit = parseInt(req.query.limit) || 10;
+            const page = Math.max(1, parseInt(req.query.page) || 1);
+            const limit = Math.max(1, Math.min(100, parseInt(req.query.limit) || 10));
             const offset = (page - 1) * limit;
+
+            if (isNaN(page) || isNaN(limit)) {
+                return res.status(400).json({ success: false, message: '페이지 번호와 한 페이지당 게시물 수는 숫자여야 합니다.' });
+            }
+
+            if (page < 1 || limit < 1) {
+                return res.status(400).json({ success: false, message: '페이지 번호와 한 페이지당 게시물 수는 1 이상이어야 합니다.' });
+            }
 
             const [posts] = await db.execute(`
                 SELECT 
@@ -162,8 +170,8 @@ const adminController = {
                 LEFT JOIN comments c ON p.id = c.post_id
                 GROUP BY p.id
                 ORDER BY p.created_at DESC
-                LIMIT ? OFFSET ?
-            `, [limit, offset]);
+                LIMIT ${limit} OFFSET ${offset}
+            `);
 
             const [total] = await db.execute('SELECT COUNT(*) as count FROM posts');
 
@@ -208,10 +216,32 @@ const adminController = {
     // 댓글 조회 (관리자용)
     getComments: async (req, res) => {
         try {
-            const page = parseInt(req.query.page) || 1;
-            const limit = parseInt(req.query.limit) || 10;
+            const page = Math.max(1, parseInt(req.query.page) || 1);
+            const limit = Math.max(1, Math.min(100, parseInt(req.query.limit) || 10));
             const offset = (page - 1) * limit;
 
+            console.log('getComments params:', { page, limit, offset }); // 디버깅용
+
+            // 먼저 간단한 쿼리로 테스트
+            const [commentsCount] = await db.execute('SELECT COUNT(*) as count FROM comments');
+            console.log('Total comments count:', commentsCount[0].count);
+
+            if (commentsCount[0].count === 0) {
+                return res.json({
+                    success: true,
+                    data: {
+                        comments: [],
+                        pagination: {
+                            currentPage: page,
+                            totalPages: 0,
+                            totalComments: 0
+                        }
+                    }
+                });
+            }
+
+            // MySQL 호환성을 위해 안전한 정수 값으로 직접 쿼리 작성
+            // offset과 limit이 이미 검증된 정수이므로 안전함
             const [comments] = await db.execute(`
                 SELECT 
                     c.id, c.content, c.created_at,
@@ -222,15 +252,15 @@ const adminController = {
                 JOIN users u ON c.user_id = u.id
                 JOIN posts p ON c.post_id = p.id
                 ORDER BY c.created_at DESC
-                LIMIT ? OFFSET ?
-            `, [limit, offset]);
+                LIMIT ${limit} OFFSET ${offset}
+            `);
 
             const [total] = await db.execute('SELECT COUNT(*) as count FROM comments');
 
             res.json({
                 success: true,
                 data: {
-                    comments,
+                    comments: comments,
                     pagination: {
                         currentPage: page,
                         totalPages: Math.ceil(total[0].count / limit),
@@ -238,6 +268,7 @@ const adminController = {
                     }
                 }
             });
+
         } catch (error) {
             console.error('Get comments error:', error);
             res.status(500).json({ success: false, message: '댓글 목록을 불러오는데 실패했습니다.' });
